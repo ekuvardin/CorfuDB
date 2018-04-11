@@ -23,6 +23,7 @@ import javax.annotation.Nullable;
 
 import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
+import lombok.Data;
 import lombok.Getter;
 
 import org.corfudb.runtime.exceptions.DataCorruptionException;
@@ -54,7 +55,7 @@ public class DataStore implements IDataStore {
     private final Map<String, Object> opts;
     private final boolean isPersistent;
     @Getter
-    private final LoadingCache<String, String> cache;
+    private final LoadingCache<DataStoreKey, Object> cache;
     private final String logDir;
 
     @Getter
@@ -85,8 +86,8 @@ public class DataStore implements IDataStore {
      * obtain an in-memory cache, no content loader, no writer, no size limit.
      * @return  new LoadingCache for the DataStore
      */
-    private LoadingCache<String, String> buildMemoryDs() {
-        LoadingCache<String, String> cache = Caffeine
+    private LoadingCache<DataStoreKey, Object> buildMemoryDs() {
+        LoadingCache<DataStoreKey, Object> cache = Caffeine
                 .newBuilder()
                 .build(k -> null);
         return cache;
@@ -109,17 +110,22 @@ public class DataStore implements IDataStore {
      *
      * @return the cache object
      */
-    private LoadingCache<String, String> buildPersistentDs() {
-        LoadingCache<String, String> cache = Caffeine.newBuilder()
+    private LoadingCache<DataStoreKey, Object> buildPersistentDs() {
+
+        LoadingCache<DataStoreKey, Object> cache = Caffeine.newBuilder()
                 .recordStats()
-                .writer(new CacheWriter<String, String>() {
+                .writer(new CacheWriter<DataStoreKey, Object>() {
                     @Override
-                    public synchronized void write(@Nonnull String key, @Nonnull String value) {
+                    public synchronized void write(@Nonnull DataStoreKey dsKey, @Nonnull Object value) {
                         try {
-                            Path path = Paths.get(logDir + File.separator + key + EXTENSION);
-                            Path tmpPath = Paths.get(logDir + File.separator + key + EXTENSION + ".tmp");
-                            byte[] stringBytes = value.getBytes();
-                            ByteBuffer buffer = ByteBuffer.allocate(value.getBytes().length
+
+                            Path path = Paths.get(logDir + File.separator + dsKey.getKey() + EXTENSION);
+                            Path tmpPath = Paths.get(logDir + File.separator + dsKey.getKey() + EXTENSION + ".tmp");
+
+                            String json = JsonUtils.parser.toJson(value, dsKey.getTClass());
+                            byte[] stringBytes = json.getBytes();
+
+                            ByteBuffer buffer = ByteBuffer.allocate(json.getBytes().length
                                     + Integer.BYTES);
                             buffer.putInt(getChecksum(stringBytes));
                             buffer.put(stringBytes);
@@ -134,11 +140,11 @@ public class DataStore implements IDataStore {
                     }
 
                     @Override
-                    public synchronized void delete(@Nonnull String key,
-                                                    @Nullable String value,
+                    public synchronized void delete(@Nonnull DataStoreKey dsKey,
+                                                    @Nullable Object value,
                                                     @Nonnull RemovalCause cause) {
                         try {
-                            Path path = Paths.get(logDir + File.separator + key);
+                            Path path = Paths.get(logDir + File.separator + dsKey.getKey());
                             Files.deleteIfExists(path);
                         } catch (IOException e) {
                             throw new RuntimeException(e);
@@ -146,20 +152,20 @@ public class DataStore implements IDataStore {
                     }
                 })
                 .maximumSize(dsCacheSize)
-                .build(key -> {
+                .build(dsKey -> {
                     try {
-                        Path path = Paths.get(logDir + File.separator + key + EXTENSION);
+                        Path path = Paths.get(logDir + File.separator + dsKey.getKey() + EXTENSION);
                         if (Files.notExists(path)) {
                             return null;
                         }
                         byte[] bytes = Files.readAllBytes(path);
                         ByteBuffer buf = ByteBuffer.wrap(bytes);
                         int checksum = buf.getInt();
-                        byte[] strBytes = Arrays.copyOfRange(bytes, 4, bytes.length);
-                        if (checksum != getChecksum(strBytes)) {
+                        byte[] jsonBytes = Arrays.copyOfRange(bytes, 4, bytes.length);
+                        if (checksum != getChecksum(jsonBytes)) {
                             throw new DataCorruptionException();
                         }
-                        return new String(strBytes);
+                        return getObject(new String(jsonBytes), dsKey.getTClass());
                     } catch (IOException e) {
                         throw new RuntimeException(e);
                     }
@@ -169,14 +175,17 @@ public class DataStore implements IDataStore {
     }
 
     @Override
-    public synchronized  <T> void put(Class<T> tclass, String prefix, String key, T value) {
-        cache.put(getKey(prefix, key), JsonUtils.parser.toJson(value, tclass));
+    public synchronized <T> void put(Class<T> tclass, String prefix, String key, T value) {
+        String json = JsonUtils.parser.toJson(value, tclass);
+        T tmpVal = JsonUtils.parser.fromJson(json, tclass);
+        DataStoreKey dsk = new DataStoreKey(getKey(prefix, key), tclass);
+        cache.put(dsk, tmpVal);
     }
 
     @Override
     public synchronized  <T> T get(Class<T> tclass, String prefix, String key) {
-        String json = cache.get(getKey(prefix, key));
-        return getObject(json, tclass);
+        DataStoreKey dsk = new DataStoreKey(getKey(prefix, key), tclass);
+        return (T) cache.get(dsk);
     }
 
     /**
@@ -192,17 +201,20 @@ public class DataStore implements IDataStore {
      * @return the latest value in the cache
      */
     public <T> T get(Class<T> tclass, String prefix, String key, T value) {
-        String keyString = getKey(prefix, key);
-        String json = cache.get(keyString, k -> JsonUtils.parser.toJson(value, tclass));
-        return getObject(json, tclass);
+        DataStoreKey dsk = new DataStoreKey(getKey(prefix, key), tclass);
+        return (T) cache.get(dsk, k -> {
+            String json = JsonUtils.parser.toJson(value, tclass);
+            T tmpVal = JsonUtils.parser.fromJson(json, tclass);
+            return tmpVal;
+        });
     }
 
     @Override
     public synchronized  <T> List<T> getAll(Class<T> tclass, String prefix) {
         List<T> list = new ArrayList<T>();
-        for (Map.Entry<String, String> entry : cache.asMap().entrySet()) {
-            if (entry.getKey().startsWith(prefix)) {
-                list.add(getObject(entry.getValue(), tclass));
+        for (Map.Entry<DataStoreKey, Object> entry : cache.asMap().entrySet()) {
+            if (entry.getKey().getKey().startsWith(prefix)) {
+                list.add((T) entry.getValue());
             }
         }
         return list;
@@ -225,6 +237,12 @@ public class DataStore implements IDataStore {
 
     private boolean isNotNull(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    @Data
+    class DataStoreKey<T> {
+        final String key;
+        final Class<T> tClass;
     }
 
 }
