@@ -1,5 +1,6 @@
 package org.corfudb.perfclient;
 
+import org.corfudb.protocols.wireprotocol.Token;
 import org.corfudb.runtime.CorfuRuntime;
 import org.corfudb.runtime.collections.SMRMap;
 import org.corfudb.runtime.view.stream.IStreamView;
@@ -34,7 +35,54 @@ public class CCPClient {
             streams[x] = runtimes[x].getStreamsView().get(CorfuRuntime.getStreamID(streamName));
         }
 
-        boolean streamWrites = false;
+
+
+        //=============================================================
+        /**
+        Runnable r1 = () -> {
+            byte[] payload = new byte[sizeOfPayload];
+            for (int x = 0; x < opsPerThread; x++) {
+                runtimes[0].getAddressSpaceView().write(new Token((long) x * 3, 0), payload);
+            }
+        };
+
+        Runnable r2 = () -> {
+            byte[] payload = new byte[sizeOfPayload];
+            for (int x = 0; x < opsPerThread; x++) {
+                runtimes[1].getAddressSpaceView().write(new Token((long) x * 3 + 1, 0), payload);
+            }
+        };
+
+        Runnable r3 = () -> {
+            byte[] payload = new byte[sizeOfPayload];
+            for (int x = 0; x < opsPerThread; x++) {
+                runtimes[2].getAddressSpaceView().write(new Token((long) x * 3 + 2, 0), payload);
+            }
+        };
+
+        Thread t1 = new Thread(r1);
+        Thread t2 = new Thread(r2);
+        Thread t3 = new Thread(r3);
+
+        long a1 = System.currentTimeMillis();
+
+        t1.start();
+        t2.start();
+        t3.start();
+
+        t1.join();
+        t2.join();
+        t3.join();
+
+        long a2 = System.currentTimeMillis();
+        System.out.println("time " + (a2 - a1));
+        System.out.println("totalOps " + (opsPerThread * numThreads));
+        System.out.println("throughput " + (((opsPerThread * numThreads) * 1.0) / (a2 - a1)));
+
+        System.exit(-1);
+         **/
+        //=============================================================
+        boolean streamWrites = true;
 
         Thread[] writerThreads = new Thread[numThreads];
         if (!streamWrites) {
@@ -53,11 +101,12 @@ public class CCPClient {
         } else {
 
             for (int x = 0; x < numThreads; x++) {
+                final int client = x%numClients;
                 Runnable r = () -> {
                     byte[] payload = new byte[sizeOfPayload];
 
                     for (int y = 0; y < opsPerThread; y++) {
-                        streams[y % numClients].append(payload);
+                        streams[client].append(payload);
                     }
                 };
 

@@ -119,7 +119,6 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
     /**
      * Correctness Logging
      */
-    private final Logger correctnessLogger = LoggerFactory.getLogger("correctness");
 
     /**
      * Creates a CorfuCompileProxy object on a particular stream.
@@ -249,7 +248,6 @@ public class CorfuCompileProxy<T> implements ICorfuSMRProxyInternal<T> {
         long address = underlyingObject.logUpdate(smrEntry, keepUpcallResult);
         log.trace("Update[{}] {}@{} ({}) conflictObj={}",
                 this, smrUpdateFunction, address, args, conflictObject);
-        correctnessLogger.trace("Version, {}", address);
         return address;
     }
 

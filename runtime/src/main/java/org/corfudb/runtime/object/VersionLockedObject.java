@@ -115,8 +115,6 @@ public class VersionLockedObject<T> {
     /**
      * Correctness Logging
      */
-    private final Logger correctnessLogger = LoggerFactory.getLogger("correctness");
-
     /**
      * The VersionLockedObject maintains a versioned object which is backed by an ISMRStream,
      * and is optionally backed by an additional optimistic update stream.
@@ -191,7 +189,6 @@ public class VersionLockedObject<T> {
 
                     long versionForCorrectness = getVersionUnsafe();
                     if (lock.validate(ts)) {
-                        correctnessLogger.trace("Version, {}", versionForCorrectness);
                         return ret;
                     }
                 }
@@ -225,13 +222,11 @@ public class VersionLockedObject<T> {
 
                 long versionForCorrectness = getVersionUnsafe();
                 if (lock.validate(ts)) {
-                    correctnessLogger.trace("Version, {}", versionForCorrectness);
                     return ret;
                 }
             }
             // If not, perform the update operations
             updateFunction.accept(this);
-            correctnessLogger.trace("Version, {}", getVersionUnsafe());
             log.trace("Access [{}] Updated (writelock) access at {}", this, getVersionUnsafe());
             return accessFunction.apply(object);
             // And perform the access
